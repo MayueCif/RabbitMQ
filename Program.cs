@@ -1,7 +1,9 @@
 ﻿using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace rabbitmq
@@ -109,27 +111,96 @@ namespace rabbitmq
                 //    channel.QueueDeclare("dlx_queue",false,false,false,argumentsDlx);
                 //}
 
+                //using (var channel = connection.CreateModel())
+                //{
+
+                //    channel.ExchangeDeclare("priority_exchange", "direct");
+                //    var arguments = new Dictionary<string, object>();
+                //    arguments.Add("x-max-priority", 10);  //
+                //    channel.QueueDeclare("priority_queue", false, false, false, arguments);
+                //    channel.QueueBind("priority_queue", "priority_exchange", "priority_key");
+
+                //    var properties = channel.CreateBasicProperties();
+                //    properties.Priority = 2;
+                //    string message = "Priority 2"; //传递的消息内容
+                //    channel.BasicPublish("priority_exchange", "priority_key", properties, Encoding.UTF8.GetBytes(message)); //生产消息
+                //    properties.Priority = 5;
+                //    message = "Priority 5"; //传递的消息内容
+                //    channel.BasicPublish("priority_exchange", "priority_key", properties, Encoding.UTF8.GetBytes(message)); //生产消息
+                //    var result = channel.BasicGet("priority_queue", false);
+                //    channel.BasicAck(result.DeliveryTag, true);
+                //    Console.WriteLine($"Received:{Encoding.UTF8.GetString(result.Body.ToArray())}");
+
+                //}
+
+
+                #region   生成者确认
                 using (var channel = connection.CreateModel())
                 {
+                    #region   事务机制
+                    //channel.TxSelect();
+                    //try
+                    //{
+                    //    //发送消息
+                    //    channel.TxCommit();
+                    //}
+                    //catch (Exception)
+                    //{
+                    //    channel.TxRollback();
+                    //}
+                    #endregion
 
-                    channel.ExchangeDeclare("priority_exchange", "direct");
-                    var arguments = new Dictionary<string, object>();
-                    arguments.Add("x-max-priority", 10);  //
-                    channel.QueueDeclare("priority_queue", false, false, false, arguments);
-                    channel.QueueBind("priority_queue", "priority_exchange", "priority_key");
+                    #region   发送方确认机制
+                    //channel.ConfirmSelect();
 
-                    var properties = channel.CreateBasicProperties();
-                    properties.Priority = 2;
-                    string message = "Priority 2"; //传递的消息内容
-                    channel.BasicPublish("priority_exchange", "priority_key", properties, Encoding.UTF8.GetBytes(message)); //生产消息
-                    properties.Priority = 5;
-                    message = "Priority 5"; //传递的消息内容
-                    channel.BasicPublish("priority_exchange", "priority_key", properties, Encoding.UTF8.GetBytes(message)); //生产消息
-                    var result = channel.BasicGet("priority_queue", false);
-                    channel.BasicAck(result.DeliveryTag, true);
-                    Console.WriteLine($"Received:{Encoding.UTF8.GetString(result.Body.ToArray())}");
+                    //channel.QueueDeclare("confirm_queue", false, false, false, null);
+                    //var message = "Confirm Message";
+                    //var properties = channel.CreateBasicProperties();
+                    //properties.DeliveryMode = 2;
+                    //channel.BasicPublish("", "confirm_queue", properties, Encoding.UTF8.GetBytes(message));
+                    //// uses a 5 second timeout
+                    //channel.WaitForConfirmsOrDie(new TimeSpan(0, 0, 5));
 
+                    //for (int i = 0; i < 10; i++)
+                    //{
+                    //    var msg = $"Confirm Message {i}";
+                    //    channel.BasicPublish("", "confirm_queue", null, Encoding.UTF8.GetBytes(msg));
+                    //}
+                    //channel.WaitForConfirmsOrDie(new TimeSpan(0, 0, 5));
+
+                    var outstandingConfirms = new ConcurrentDictionary<ulong, string>();
+
+                    channel.BasicAcks += (sender, ea) =>
+                    {
+                        if (ea.Multiple)
+                        {
+                            var confirmed = outstandingConfirms.Where(k => k.Key <= ea.DeliveryTag);
+                            foreach (var entry in confirmed)
+                            {
+                                outstandingConfirms.TryRemove(entry.Key, out _);
+                            }
+                        }
+                        else
+                        {
+                            outstandingConfirms.TryRemove(ea.DeliveryTag, out _);
+                        }
+
+                    };
+                    channel.BasicNacks += (sender, ea) =>
+                    {
+                        outstandingConfirms.TryGetValue(ea.DeliveryTag, out string body);
+                        Console.WriteLine($"Message with body {body} has been nack-ed. Sequence number: {ea.DeliveryTag}, multiple: {ea.Multiple}");
+                        //同理BasicAcks维护outstandingConfirms
+                    };
+
+                    var msg = "Async Msg";
+                    outstandingConfirms.TryAdd(channel.NextPublishSeqNo, msg);
+                    channel.BasicPublish("", "confirm_queue", null, Encoding.UTF8.GetBytes(msg));
+                    #endregion
+
+                    //channel.BasicQos(prefetchSize: 0, prefetchCount: 1, global: false);
                 }
+                #endregion
             }
 
         }
