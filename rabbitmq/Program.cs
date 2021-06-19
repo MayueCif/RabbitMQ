@@ -196,6 +196,7 @@ namespace rabbitmq
                     var msg = "Async Msg";
                     outstandingConfirms.TryAdd(channel.NextPublishSeqNo, msg);
                     channel.BasicPublish("", "confirm_queue", null, Encoding.UTF8.GetBytes(msg));
+
                     #endregion
 
                     //channel.BasicQos(prefetchSize: 0, prefetchCount: 1, global: false);
